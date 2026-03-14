@@ -1,6 +1,6 @@
 # yt-disc
 
-CLI tool that downloads songs from YouTube playlists and organizes them into CD-sized folders (80 min audio / 700 MB data).
+CLI tool that downloads songs from YouTube playlists and organizes them into CD-sized folders (80 min).
 
 ## Requirements
 
@@ -32,12 +32,5 @@ go build -o yt-disc .
 yt-disc <youtube-url>          # Pick songs from playlist, download to ~/CDs/
 yt-disc list                   # Browse existing disc folders
 yt-disc -o ~/MyDiscs <url>     # Custom output directory
-yt-disc --mode data <url>      # Data CD mode (700 MB instead of 80 min)
-yt-disc -b 320 <url>           # Custom bitrate (default: 192k)
+yt-disc -b 320 <url>           # Custom bitrate (default: 192k, range: 64-320)
 ```
-
-## Keys
-
-**Picker:** `j/k` navigate, `space` toggle, `a` all, `n` none, `s` save, `q` quit
-
-**Disc browser:** `j/k` navigate, `enter` open, `x` discard song, `u` add URL, `b` back, `q` quit

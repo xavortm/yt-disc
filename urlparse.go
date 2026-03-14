@@ -3,6 +3,7 @@ package main
 import (
 	"net/url"
 	"strings"
+	"unicode"
 )
 
 // URLType indicates the kind of YouTube URL.
@@ -36,9 +37,18 @@ type ParsedURL struct {
 	PlaylistID string
 }
 
+// maxIDLen is the longest video or playlist ID we accept.
+// Real YouTube IDs are 11 (video) or ~34 (playlist) characters.
+const maxIDLen = 128
+
 // ParseYouTubeURL detects whether a URL points to a single video, playlist, or both.
 func ParseYouTubeURL(raw string) ParsedURL {
 	p := ParsedURL{Type: URLInvalid}
+
+	// Reject URLs with control characters (null bytes, newlines, tabs, etc.).
+	if strings.ContainsFunc(raw, unicode.IsControl) {
+		return p
+	}
 
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" {
@@ -72,6 +82,16 @@ func ParseYouTubeURL(raw string) ParsedURL {
 
 	default:
 		return p
+	}
+
+	// Clean up extracted IDs.
+	p.VideoID = strings.TrimSpace(p.VideoID)
+	p.PlaylistID = strings.TrimSpace(p.PlaylistID)
+	if len(p.VideoID) > maxIDLen {
+		p.VideoID = ""
+	}
+	if len(p.PlaylistID) > maxIDLen {
+		p.PlaylistID = ""
 	}
 
 	switch {

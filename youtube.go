@@ -70,7 +70,11 @@ func DownloadAudio(ctx context.Context, videoURL, destPath string, bitrate int) 
 		videoURL,
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("yt-dlp: %w\n%s", err, strings.TrimSpace(string(out)))
+		msg := strings.TrimSpace(string(out))
+		if len(msg) > 512 {
+			msg = msg[:512] + "…"
+		}
+		return fmt.Errorf("yt-dlp: %w\n%s", err, msg)
 	}
 	return nil
 }

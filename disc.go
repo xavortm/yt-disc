@@ -30,6 +30,12 @@ type Disc struct {
 
 // CreateDisc creates a new disc folder under baseDir and returns its path.
 func CreateDisc(baseDir, name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("disc name cannot be empty")
+	}
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return "", fmt.Errorf("invalid disc name: %q", name)
+	}
 	p := filepath.Join(baseDir, name)
 	if err := os.MkdirAll(p, 0o755); err != nil {
 		return "", fmt.Errorf("creating disc folder: %w", err)
@@ -68,7 +74,7 @@ func ListSongs(discPath string) ([]Song, error) {
 
 	var songs []Song
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".mp3") {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") || !strings.HasSuffix(strings.ToLower(e.Name()), ".mp3") {
 			continue
 		}
 		s := Song{

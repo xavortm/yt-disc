@@ -51,7 +51,7 @@ func TestSanitizeFilename(t *testing.T) {
 		{
 			title:    "",
 			trackNum: 1,
-			want:     "01_.mp3",
+			want:     "01_untitled.mp3",
 		},
 		{
 			title:    "A Very Long Song Title That Exceeds The Maximum Length Allowed For CD Safe Filenames On Disk",

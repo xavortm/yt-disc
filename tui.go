@@ -466,8 +466,10 @@ func (m model) dlCmd() tea.Cmd {
 	cfg := m.cfg
 
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
 		dest := filepath.Join(discPath, filename)
-		err := DownloadAudio(context.Background(), video.URL, dest, cfg.bitrate)
+		err := DownloadAudio(ctx, video.URL, dest, cfg.bitrate)
 		return downloadedMsg{idx: idx, err: err}
 	}
 }
@@ -577,7 +579,8 @@ func probeSongsCmd(songs []Song) tea.Cmd {
 // fetchMetaCmd fetches playlist or video metadata and returns a fetchDoneMsg.
 func fetchMetaCmd(rawURL string, parsed ParsedURL) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
 		switch parsed.Type {
 		case URLPlaylist:
 			name, videos, err := FetchPlaylistMeta(ctx, rawURL)
@@ -634,7 +637,11 @@ func (m model) View() string {
 
 	if m.err != nil {
 		content += "\n" + errStyle.Render("  Error: "+m.err.Error())
-		content += "\n" + dimStyle.Render("  Press any key to dismiss")
+		if m.view == viewLoading {
+			content += "\n" + dimStyle.Render("  Press q to quit")
+		} else {
+			content += "\n" + dimStyle.Render("  Press any key to dismiss")
+		}
 	}
 
 	if m.loading {
@@ -650,6 +657,12 @@ func (m model) View() string {
 
 func (m model) viewLoading() string {
 	var b strings.Builder
+	b.WriteString(titleStyle.Render("♫ yt-disc") + "\n\n")
+
+	// When an error occurred, don't show the spinner — the error overlay handles it.
+	if m.err != nil {
+		return b.String()
+	}
 
 	elapsed := time.Since(m.loadingStart).Truncate(time.Second)
 	urlHint := m.fetchURL
@@ -657,7 +670,6 @@ func (m model) viewLoading() string {
 		urlHint = urlHint[:maxURLDisplay-3] + "..."
 	}
 
-	b.WriteString(titleStyle.Render("♫ yt-disc") + "\n\n")
 	b.WriteString(fmt.Sprintf("  %s Fetching metadata...  %s\n", m.spinner.View(), dimStyle.Render(elapsed.String())))
 	b.WriteString(dimStyle.Render("  "+urlHint) + "\n")
 

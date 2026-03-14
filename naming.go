@@ -26,7 +26,11 @@ const maxFolderNameLen = 80
 // It transliterates diacritics, strips noise tags, lowercases, collapses
 // non-alphanumeric runs into underscores, and truncates to 60 chars.
 func SanitizeFilename(title string, trackNum int) string {
-	s := transliterate(title)
+	if trackNum < 0 {
+		trackNum = 0
+	}
+	s := stripControl(title)
+	s = transliterate(s)
 	s = bracketNoise.ReplaceAllString(s, "")
 	s = parenNoise.ReplaceAllString(s, "")
 	s = strings.ToLower(s)
@@ -38,13 +42,17 @@ func SanitizeFilename(title string, trackNum int) string {
 		s = s[:maxFilenameLen]
 		s = strings.TrimRight(s, "_")
 	}
+	if s == "" {
+		s = "untitled"
+	}
 
 	return fmt.Sprintf("%02d_%s.mp3", trackNum, s)
 }
 
 // SanitizeFolderName converts a playlist title into a filesystem-safe folder name.
 func SanitizeFolderName(title string) string {
-	s := transliterate(title)
+	s := stripControl(title)
+	s = transliterate(s)
 	s = bracketNoise.ReplaceAllString(s, "")
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -115,4 +123,14 @@ func transliterate(s string) string {
 	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
 	result, _, _ := transform.String(t, s) // errors only on invalid UTF-8; safe to ignore
 	return result
+}
+
+// stripControl removes control characters (null bytes, tabs, newlines, etc.).
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }

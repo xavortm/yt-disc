@@ -35,6 +35,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := os.MkdirAll(cfg.outputDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "output directory %q: %v\n", cfg.outputDir, err)
+		os.Exit(1)
+	}
+
 	if err := checkDeps(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

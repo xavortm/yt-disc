@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -67,10 +66,9 @@ type discsLoadedMsg []Disc
 
 type songDiscardedMsg struct{ err error }
 
-type addFetchedMsg struct {
-	name   string
-	videos []VideoMeta
-	single bool
+// songsProbed carries songs with durations filled in.
+type songsProbed struct {
+	songs []Song
 }
 
 type errMsg struct{ err error }
@@ -78,10 +76,11 @@ type errMsg struct{ err error }
 // tickMsg drives the elapsed-time display during loading.
 type tickMsg time.Time
 
-// fetchDoneMsg carries the result of the initial metadata fetch.
+// fetchDoneMsg carries the result of a metadata fetch (initial or add-to-disc).
 type fetchDoneMsg struct {
 	name   string
 	videos []VideoMeta
+	single bool // true = single video, auto-download without picker
 	err    error
 }
 
@@ -125,8 +124,7 @@ type model struct {
 	fetchType ParsedURL // parsed URL for initial fetch
 
 	// Loading state
-	loadingStatus string
-	loadingStart  time.Time
+	loadingStart time.Time
 
 	// Window
 	width  int
@@ -164,14 +162,6 @@ func newBaseModel(cfg appConfig) model {
 	}
 }
 
-func newPickerModel(name string, videos []VideoMeta, cfg appConfig) model {
-	m := newBaseModel(cfg)
-	m.view = viewPicker
-	m.playlistName = name
-	m.videos = videos
-	return m
-}
-
 // newFetchModel creates a model that fetches metadata on Init.
 func newFetchModel(rawURL string, parsed ParsedURL, cfg appConfig) model {
 	m := newBaseModel(cfg)
@@ -191,7 +181,7 @@ func newListModel(cfg appConfig) model {
 func (m model) Init() tea.Cmd {
 	switch m.view {
 	case viewLoading:
-		return tea.Batch(m.spinner.Tick, timerTick(), initialFetchCmd(m.fetchURL, m.fetchType))
+		return tea.Batch(m.spinner.Tick, timerTick(), fetchMetaCmd(m.fetchURL, m.fetchType))
 	case viewDiscList:
 		return loadDiscsCmd(m.cfg.outputDir)
 	}
@@ -232,16 +222,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case addFetchedMsg:
+	case songsProbed:
+		if m.disc != nil {
+			m.disc.Songs = msg.songs
+		}
 		m.loading = false
+		return m, nil
+
+	case fetchDoneMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		if len(msg.videos) == 0 {
+			m.err = fmt.Errorf("no videos found in playlist")
+			return m, nil
+		}
+		m.playlistName = msg.name
+		m.videos = msg.videos
+		// Single video from disc-detail: auto-download without picker.
 		if msg.single && len(msg.videos) == 1 {
-			m.videos = msg.videos
-			m.playlistName = msg.name
 			m.selected = map[int]bool{0: true}
 			return m.beginDownload()
 		}
-		m.videos = msg.videos
-		m.playlistName = msg.name
 		m.selected = make(map[int]bool)
 		m.cursor = 0
 		m.scroll = 0
@@ -251,20 +255,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case errMsg:
 		m.loading = false
 		m.err = msg.err
-		return m, nil
-
-	case fetchDoneMsg:
-		if msg.err != nil {
-			m.err = msg.err
-			m.loadingStatus = "Failed"
-			return m, nil
-		}
-		m.playlistName = msg.name
-		m.videos = msg.videos
-		m.selected = make(map[int]bool)
-		m.cursor = 0
-		m.scroll = 0
-		m.view = viewPicker
 		return m, nil
 
 	case tickMsg:
@@ -319,14 +309,10 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.err = err
 					return m, nil
 				}
-				for i := range songs {
-					if dur, err := ProbeDuration(songs[i].Path); err == nil {
-						songs[i].Duration = dur
-					}
-				}
 				m.disc.Songs = songs
 				m.targetDisc = ""
-				return m, nil
+				m.loading = true
+				return m, tea.Batch(m.spinner.Tick, probeSongsCmd(songs))
 			}
 		}
 		return m, nil
@@ -377,7 +363,7 @@ func (m model) handleInputKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.dlStartTrack = n
 		}
 		m.loading = true
-		return m, tea.Batch(m.spinner.Tick, fetchURLCmd(raw, parsed))
+		return m, tea.Batch(m.spinner.Tick, fetchMetaCmd(raw, parsed))
 	default:
 		var cmd tea.Cmd
 		m.urlInput, cmd = m.urlInput.Update(msg)
@@ -448,10 +434,23 @@ func (m model) beginDownload() (model, tea.Cmd) {
 			indices = append(indices, i)
 		}
 	}
+
+	// Resolve disc path once before starting downloads.
+	discPath := m.targetDisc
+	if discPath == "" {
+		var err error
+		discPath, err = CreateDisc(m.cfg.outputDir, SanitizeFolderName(m.playlistName))
+		if err != nil {
+			m.err = err
+			return m, nil
+		}
+	}
+
 	m.dlIndices = indices
 	m.dlPos = 0
 	m.dlLog = nil
 	m.view = viewDownload
+	m.targetDisc = discPath
 	return m, tea.Batch(m.spinner.Tick, m.dlCmd())
 }
 
@@ -463,24 +462,10 @@ func (m model) dlCmd() tea.Cmd {
 	video := m.videos[idx]
 	trackNum := m.dlStartTrack + m.dlPos
 	filename := SanitizeFilename(video.Title, trackNum)
-	target := m.targetDisc
-	folderName := SanitizeFolderName(m.playlistName)
+	discPath := m.targetDisc
 	cfg := m.cfg
 
 	return func() tea.Msg {
-		var discPath string
-		if target != "" {
-			discPath = target
-			if err := os.MkdirAll(discPath, 0o755); err != nil {
-				return downloadedMsg{idx: idx, err: fmt.Errorf("creating disc dir: %w", err)}
-			}
-		} else {
-			var err error
-			discPath, err = CreateDisc(cfg.outputDir, folderName)
-			if err != nil {
-				return downloadedMsg{idx: idx, err: err}
-			}
-		}
 		dest := filepath.Join(discPath, filename)
 		err := DownloadAudio(context.Background(), video.URL, dest, cfg.bitrate)
 		return downloadedMsg{idx: idx, err: err}
@@ -519,14 +504,11 @@ func (m model) updateDiscList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if len(m.discs) > 0 {
 			d := m.discs[m.discCursor]
-			for i := range d.Songs {
-				if dur, err := ProbeDuration(d.Songs[i].Path); err == nil {
-					d.Songs[i].Duration = dur
-				}
-			}
 			m.disc = &d
 			m.songCursor = 0
 			m.view = viewDiscDetail
+			m.loading = true
+			return m, tea.Batch(m.spinner.Tick, probeSongsCmd(d.Songs))
 		}
 	}
 	return m, nil
@@ -578,49 +560,48 @@ func loadDiscsCmd(dir string) tea.Cmd {
 	}
 }
 
-// fetchMetaCmd fetches playlist or video metadata and wraps the result in toMsg.
-func fetchMetaCmd(rawURL string, parsed ParsedURL, toMsg func(name string, videos []VideoMeta, single bool, err error) tea.Msg) tea.Cmd {
+// probeSongsCmd probes durations for all songs in the background.
+func probeSongsCmd(songs []Song) tea.Cmd {
+	return func() tea.Msg {
+		probed := make([]Song, len(songs))
+		copy(probed, songs)
+		for i := range probed {
+			if dur, err := ProbeDuration(probed[i].Path); err == nil {
+				probed[i].Duration = dur
+			}
+		}
+		return songsProbed{songs: probed}
+	}
+}
+
+// fetchMetaCmd fetches playlist or video metadata and returns a fetchDoneMsg.
+func fetchMetaCmd(rawURL string, parsed ParsedURL) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 		switch parsed.Type {
 		case URLPlaylist:
 			name, videos, err := FetchPlaylistMeta(ctx, rawURL)
-			return toMsg(name, videos, false, err)
+			return fetchDoneMsg{name: name, videos: videos, err: err}
 		case URLAmbiguous:
 			name, videos, err := FetchPlaylistMeta(ctx, rawURL)
 			if err == nil {
-				return toMsg(name, videos, false, nil)
+				return fetchDoneMsg{name: name, videos: videos}
 			}
 			video, err2 := FetchVideoMeta(ctx, rawURL)
 			if err2 != nil {
-				return toMsg("", nil, true, err2)
+				return fetchDoneMsg{err: err2}
 			}
-			return toMsg("Single Video", []VideoMeta{video}, true, nil)
+			return fetchDoneMsg{name: "Single Video", videos: []VideoMeta{video}, single: true}
 		case URLSingle:
 			video, err := FetchVideoMeta(ctx, rawURL)
 			if err != nil {
-				return toMsg("", nil, true, err)
+				return fetchDoneMsg{err: err}
 			}
-			return toMsg("Single Video", []VideoMeta{video}, true, nil)
+			return fetchDoneMsg{name: "Single Video", videos: []VideoMeta{video}, single: true}
 		default:
-			return toMsg("", nil, false, fmt.Errorf("invalid URL"))
+			return fetchDoneMsg{err: fmt.Errorf("invalid URL")}
 		}
 	}
-}
-
-func initialFetchCmd(rawURL string, parsed ParsedURL) tea.Cmd {
-	return fetchMetaCmd(rawURL, parsed, func(name string, videos []VideoMeta, _ bool, err error) tea.Msg {
-		return fetchDoneMsg{name: name, videos: videos, err: err}
-	})
-}
-
-func fetchURLCmd(rawURL string, parsed ParsedURL) tea.Cmd {
-	return fetchMetaCmd(rawURL, parsed, func(name string, videos []VideoMeta, single bool, err error) tea.Msg {
-		if err != nil {
-			return errMsg{err: err}
-		}
-		return addFetchedMsg{name: name, videos: videos, single: single}
-	})
 }
 
 func timerTick() tea.Cmd {
@@ -708,7 +689,7 @@ func (m model) viewPicker() string {
 	}
 	stats := fmt.Sprintf("  %d selected  %s / %s",
 		len(m.selected), fmtDuration(selDur), fmtDuration(AudioCDCapacity))
-	if selDur > AudioCDCapacity && m.cfg.mode == "audio" {
+	if selDur > AudioCDCapacity {
 		stats += warnStyle.Render("  ⚠ OVER CAPACITY")
 	}
 	b.WriteString(dimStyle.Render(stats) + "\n\n")
@@ -804,7 +785,7 @@ func (m model) viewDiscDetail() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf("💿 %s  %d songs  %s / %s",
 		m.disc.Name, len(m.disc.Songs),
 		fmtDuration(total), fmtDuration(AudioCDCapacity))) + "\n")
-	if total > AudioCDCapacity && m.cfg.mode == "audio" {
+	if total > AudioCDCapacity {
 		b.WriteString(warnStyle.Render("  ⚠ OVER CAPACITY") + "\n")
 	}
 	b.WriteString("\n")
@@ -839,11 +820,12 @@ func fmtDuration(d time.Duration) string {
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
+	r := []rune(s)
+	if len(r) <= max {
 		return s
 	}
 	if max <= 3 {
-		return s[:max]
+		return string(r[:max])
 	}
-	return s[:max-3] + "..."
+	return string(r[:max-3]) + "..."
 }

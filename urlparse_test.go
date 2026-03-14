@@ -65,6 +65,16 @@ func TestParseYouTubeURL(t *testing.T) {
 			wantType: URLInvalid,
 		},
 		{
+			name:     "invalid - ftp scheme",
+			url:      "ftp://youtube.com/watch?v=abc123",
+			wantType: URLInvalid,
+		},
+		{
+			name:     "invalid - file scheme",
+			url:      "file:///etc/passwd",
+			wantType: URLInvalid,
+		},
+		{
 			name:     "invalid - empty",
 			url:      "",
 			wantType: URLInvalid,

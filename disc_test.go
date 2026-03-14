@@ -151,17 +151,6 @@ func TestTotalDuration(t *testing.T) {
 	}
 }
 
-func TestTotalSize(t *testing.T) {
-	songs := []Song{
-		{Size: 1024},
-		{Size: 2048},
-	}
-	got := TotalSize(songs)
-	if got != 3072 {
-		t.Errorf("TotalSize = %d, want 3072", got)
-	}
-}
-
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

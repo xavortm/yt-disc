@@ -106,7 +106,7 @@ func TestSanitizeFolderName(t *testing.T) {
 		{"Playlist: Best of 2024", "Playlist_ Best of 2024"},
 		{"  ", "Untitled"},
 		{"", "Untitled"},
-		{"Beyoncé's Greatest Hits [Deluxe]", "Beyonce's Greatest Hits"},
+		{"Beyoncé's Greatest Hits [Deluxe]", "Beyonce's Greatest Hits [Deluxe]"},
 		{"Normal Name", "Normal Name"},
 		{"Has/Slashes\\And:Colons", "Has_Slashes_And_Colons"},
 	}

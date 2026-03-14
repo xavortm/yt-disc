@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-const (
-	AudioCDCapacity = 80 * time.Minute
-	dataCDCapacity  = 700 * 1024 * 1024 // 700 MB
-)
+const AudioCDCapacity = 80 * time.Minute
 
 // Song represents an audio file on a disc.
 type Song struct {
@@ -22,7 +19,6 @@ type Song struct {
 	Name     string
 	TrackNum int
 	Duration time.Duration
-	Size     int64
 }
 
 // Disc represents a folder of songs.
@@ -80,9 +76,6 @@ func ListSongs(discPath string) ([]Song, error) {
 			Name:     e.Name(),
 			TrackNum: parseTrackNum(e.Name()),
 		}
-		if info, err := e.Info(); err == nil {
-			s.Size = info.Size()
-		}
 		songs = append(songs, s)
 	}
 	sort.Slice(songs, func(i, j int) bool {
@@ -136,15 +129,6 @@ func TotalDuration(songs []Song) time.Duration {
 	var total time.Duration
 	for _, s := range songs {
 		total += s.Duration
-	}
-	return total
-}
-
-// TotalSize sums song file sizes.
-func TotalSize(songs []Song) int64 {
-	var total int64
-	for _, s := range songs {
-		total += s.Size
 	}
 	return total
 }

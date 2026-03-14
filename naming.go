@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	bracketNoise = regexp.MustCompile(`\[[^\]]*\]`)
+	bracketNoise = regexp.MustCompile(`(?i)\[\s*(official\s*(video|audio|music\s*video|visualizer|lyric\s*video)?|lyrics?|lyric\s*video|hd|hq|4k|1080p|720p|audio|music\s*video|visualizer|video\s*oficial|videoclip|clip\s*officiel|remastered(\s*\d{4})?)\s*\]`)
 	parenNoise   = regexp.MustCompile(`(?i)\(\s*(official\s*(video|audio|music\s*video|visualizer|lyric\s*video)?|lyrics?|lyric\s*video|hd|hq|4k|1080p|720p|audio|music\s*video|visualizer|video\s*oficial|videoclip|clip\s*officiel)\s*\)`)
 	nonAlnum     = regexp.MustCompile(`[^a-z0-9]+`)
 	multiUnder   = regexp.MustCompile(`_+`)

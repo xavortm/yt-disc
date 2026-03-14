@@ -12,7 +12,6 @@ import (
 
 type appConfig struct {
 	outputDir string
-	mode      string
 	bitrate   int
 }
 
@@ -27,11 +26,14 @@ func main() {
 
 	flag.StringVar(&cfg.outputDir, "output-dir", defOut, "output directory for disc folders")
 	flag.StringVar(&cfg.outputDir, "o", defOut, "output directory (shorthand)")
-	flag.StringVar(&cfg.mode, "mode", "audio", "capacity mode: audio (80 min) or data (700 MB)")
-	flag.StringVar(&cfg.mode, "m", "audio", "capacity mode (shorthand)")
-	flag.IntVar(&cfg.bitrate, "bitrate", 192, "mp3 bitrate in kbps")
+	flag.IntVar(&cfg.bitrate, "bitrate", 192, "mp3 bitrate in kbps (64-320)")
 	flag.IntVar(&cfg.bitrate, "b", 192, "mp3 bitrate (shorthand)")
 	flag.Parse()
+
+	if cfg.bitrate < 64 || cfg.bitrate > 320 {
+		fmt.Fprintln(os.Stderr, "bitrate must be between 64 and 320 kbps")
+		os.Exit(1)
+	}
 
 	if err := checkDeps(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -42,7 +44,6 @@ func main() {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "Usage: yt-disc <playlist-or-video-url>")
 		fmt.Fprintln(os.Stderr, "       yt-disc list")
-		fmt.Fprintln(os.Stderr, "       yt-disc --mode data <url>")
 		fmt.Fprintln(os.Stderr, "       yt-disc -o ~/MyDiscs <url>")
 		os.Exit(1)
 	}

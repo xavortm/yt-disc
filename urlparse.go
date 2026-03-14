@@ -34,15 +34,19 @@ type ParsedURL struct {
 	Type       URLType
 	VideoID    string
 	PlaylistID string
-	RawURL     string
 }
 
 // ParseYouTubeURL detects whether a URL points to a single video, playlist, or both.
 func ParseYouTubeURL(raw string) ParsedURL {
-	p := ParsedURL{RawURL: raw, Type: URLInvalid}
+	p := ParsedURL{Type: URLInvalid}
 
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme == "" {
+		return p
+	}
+
+	// Only allow HTTP(S) schemes.
+	if u.Scheme != "http" && u.Scheme != "https" {
 		return p
 	}
 

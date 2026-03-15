@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -13,6 +14,17 @@ import (
 type appConfig struct {
 	outputDir string
 	bitrate   int
+	margin    time.Duration
+	normalize bool
+}
+
+// capacity returns the effective disc capacity after subtracting the safety margin.
+func (c appConfig) capacity() time.Duration {
+	effective := AudioCDCapacity - c.margin
+	if effective < 0 {
+		return 0
+	}
+	return effective
 }
 
 func main() {
@@ -24,11 +36,31 @@ func main() {
 	}
 	defOut := filepath.Join(home, "CDs")
 
+	var marginStr string
 	flag.StringVar(&cfg.outputDir, "output-dir", defOut, "output directory for disc folders")
 	flag.StringVar(&cfg.outputDir, "o", defOut, "output directory (shorthand)")
 	flag.IntVar(&cfg.bitrate, "bitrate", 192, "mp3 bitrate in kbps (64-320)")
 	flag.IntVar(&cfg.bitrate, "b", 192, "mp3 bitrate (shorthand)")
+	flag.StringVar(&marginStr, "margin", "30s", "safety margin subtracted from 80-min disc capacity (e.g. 30s, 1m, 2m30s)")
+	flag.StringVar(&marginStr, "m", "30s", "safety margin (shorthand)")
+	flag.BoolVar(&cfg.normalize, "normalize", true, "normalize audio levels via FFmpeg loudnorm filter")
+	flag.BoolVar(&cfg.normalize, "n", true, "normalize audio (shorthand)")
 	flag.Parse()
+
+	margin, err := time.ParseDuration(marginStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid margin %q: %v\n", marginStr, err)
+		os.Exit(1)
+	}
+	if margin < 0 {
+		fmt.Fprintln(os.Stderr, "margin must not be negative")
+		os.Exit(1)
+	}
+	if margin >= AudioCDCapacity {
+		fmt.Fprintf(os.Stderr, "margin must be less than %v\n", AudioCDCapacity)
+		os.Exit(1)
+	}
+	cfg.margin = margin
 
 	if cfg.bitrate < 64 || cfg.bitrate > 320 {
 		fmt.Fprintln(os.Stderr, "bitrate must be between 64 and 320 kbps")

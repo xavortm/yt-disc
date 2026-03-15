@@ -119,6 +119,11 @@ type model struct {
 	// Config
 	cfg appConfig
 
+	// Per-session settings (togglable in the TUI)
+	normalize       bool
+	settingsFocused bool
+	settingsCursor  int
+
 	// Initial fetch
 	fetchURL  string    // URL to fetch on init (empty = skip)
 	fetchType ParsedURL // parsed URL for initial fetch
@@ -159,6 +164,7 @@ func newBaseModel(cfg appConfig) model {
 		spinner:      s,
 		urlInput:     ti,
 		cfg:          cfg,
+		normalize:    cfg.normalize,
 	}
 }
 
@@ -275,6 +281,11 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// URL input mode
 	if m.inputMode {
 		return m.handleInputKey(msg)
+	}
+
+	// Settings panel focused
+	if m.settingsFocused {
+		return m.updateSettings(msg)
 	}
 
 	// Loading: only ctrl+c
@@ -405,6 +416,9 @@ func (m model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.beginDownload()
+	case "N":
+		m.settingsFocused = true
+		m.settingsCursor = 0
 	}
 	return m, nil
 }
@@ -464,12 +478,13 @@ func (m model) dlCmd() tea.Cmd {
 	filename := SanitizeFilename(video.Title, trackNum)
 	discPath := m.targetDisc
 	cfg := m.cfg
+	normalize := m.normalize
 
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		dest := filepath.Join(discPath, filename)
-		err := DownloadAudio(ctx, video.URL, dest, cfg.bitrate)
+		err := DownloadAudio(ctx, video.URL, dest, cfg.bitrate, normalize)
 		return downloadedMsg{idx: idx, err: err}
 	}
 }
@@ -546,6 +561,9 @@ func (m model) updateDiscDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.inputMode = true
 		m.urlInput.Focus()
 		return m, textinput.Blink
+	case "N":
+		m.settingsFocused = true
+		m.settingsCursor = 0
 	}
 	return m, nil
 }
@@ -699,9 +717,13 @@ func (m model) viewPicker() string {
 			selDur += m.videos[i].Duration
 		}
 	}
+	cap := m.cfg.capacity()
 	stats := fmt.Sprintf("  %d selected  %s / %s",
-		len(m.selected), fmtDuration(selDur), fmtDuration(AudioCDCapacity))
-	if selDur > AudioCDCapacity {
+		len(m.selected), fmtDuration(selDur), fmtDuration(cap))
+	if m.cfg.margin > 0 {
+		stats += dimStyle.Render(fmt.Sprintf("  (-%s margin)", fmtDuration(m.cfg.margin)))
+	}
+	if selDur > cap {
 		stats += warnStyle.Render("  ⚠ OVER CAPACITY")
 	}
 	b.WriteString(dimStyle.Render(stats) + "\n\n")
@@ -726,7 +748,12 @@ func (m model) viewPicker() string {
 		b.WriteString(fmt.Sprintf("%s%s%-55s %s\n", prefix, check, title, dur))
 	}
 
-	b.WriteString("\n" + dimStyle.Render("  j/k: navigate  space: toggle  a: all  n: none  s: save  q: quit"))
+	b.WriteString("\n" + m.renderSettings())
+	if m.settingsFocused {
+		b.WriteString("\n" + dimStyle.Render("  j/k: navigate  space: toggle  N/esc: back"))
+	} else {
+		b.WriteString("\n" + dimStyle.Render("  j/k: navigate  space: toggle  a: all  n: none  N: settings  s: save  q: quit"))
+	}
 	return b.String()
 }
 
@@ -737,7 +764,8 @@ func (m model) viewDownload() string {
 	if target == "" {
 		target = filepath.Join(m.cfg.outputDir, SanitizeFolderName(m.playlistName))
 	}
-	b.WriteString(titleStyle.Render("⬇ Downloading to "+target) + "\n\n")
+	b.WriteString(titleStyle.Render("⬇ Downloading to "+target) + "\n")
+	b.WriteString(m.renderSettings() + "\n")
 
 	if m.dlPos < len(m.dlIndices) {
 		idx := m.dlIndices[m.dlPos]
@@ -794,10 +822,15 @@ func (m model) viewDiscDetail() string {
 	}
 
 	total := TotalDuration(m.disc.Songs)
-	b.WriteString(titleStyle.Render(fmt.Sprintf("💿 %s  %d songs  %s / %s",
+	cap := m.cfg.capacity()
+	header := fmt.Sprintf("💿 %s  %d songs  %s / %s",
 		m.disc.Name, len(m.disc.Songs),
-		fmtDuration(total), fmtDuration(AudioCDCapacity))) + "\n")
-	if total > AudioCDCapacity {
+		fmtDuration(total), fmtDuration(cap))
+	if m.cfg.margin > 0 {
+		header += fmt.Sprintf("  (-%s margin)", fmtDuration(m.cfg.margin))
+	}
+	b.WriteString(titleStyle.Render(header) + "\n")
+	if total > cap {
 		b.WriteString(warnStyle.Render("  ⚠ OVER CAPACITY") + "\n")
 	}
 	b.WriteString("\n")
@@ -815,7 +848,72 @@ func (m model) viewDiscDetail() string {
 			prefix, truncate(s.Name, songNameWidth), dur))
 	}
 
-	b.WriteString("\n" + dimStyle.Render("  j/k: navigate  x: discard  u: add URL  b: back  q: quit"))
+	b.WriteString("\n" + m.renderSettings())
+	if m.settingsFocused {
+		b.WriteString("\n" + dimStyle.Render("  j/k: navigate  space: toggle  N/esc: back"))
+	} else {
+		b.WriteString("\n" + dimStyle.Render("  j/k: navigate  x: discard  u: add URL  N: settings  b: back  q: quit"))
+	}
+	return b.String()
+}
+
+// --- Settings ---
+
+// setting is a single toggleable option shown in the settings panel.
+type setting struct {
+	label string
+	value *bool
+}
+
+// settings returns the list of toggleable settings.
+// Add new settings here; the TUI picks them up automatically.
+func (m model) settings() []setting {
+	return []setting{
+		{"Normalize audio (loudnorm)", &m.normalize},
+	}
+}
+
+// updateSettings handles keys when the settings panel is focused.
+func (m model) updateSettings(msg tea.KeyMsg) (model, tea.Cmd) {
+	items := m.settings()
+	switch msg.String() {
+	case "N", "esc":
+		m.settingsFocused = false
+	case "j", "down":
+		if m.settingsCursor < len(items)-1 {
+			m.settingsCursor++
+		}
+	case "k", "up":
+		if m.settingsCursor > 0 {
+			m.settingsCursor--
+		}
+	case " ", "enter":
+		if m.settingsCursor < len(items) {
+			*items[m.settingsCursor].value = !*items[m.settingsCursor].value
+		}
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// renderSettings returns the settings panel with an optional cursor.
+func (m model) renderSettings() string {
+	items := m.settings()
+	var b strings.Builder
+	b.WriteString(dimStyle.Render("  ── Settings ──") + "\n")
+	for i, s := range items {
+		prefix := "  "
+		if m.settingsFocused && i == m.settingsCursor {
+			prefix = cursorStyle.Render("▸ ")
+		}
+		check := "[ ]"
+		if *s.value {
+			check = checkStyle.Render("[✓]")
+		}
+		b.WriteString(fmt.Sprintf("%s%s %s\n", prefix, check, s.label))
+	}
 	return b.String()
 }
 

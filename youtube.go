@@ -57,22 +57,28 @@ func FetchVideoMeta(ctx context.Context, videoURL string) (VideoMeta, error) {
 
 // DownloadAudio downloads a video as mp3 via yt-dlp.
 // destPath should end in .mp3; yt-dlp handles the conversion.
-func DownloadAudio(ctx context.Context, videoURL, destPath string, bitrate int) error {
+// When normalize is true, the FFmpeg loudnorm filter is applied to even out
+// perceived volume across tracks.
+func DownloadAudio(ctx context.Context, videoURL, destPath string, bitrate int, normalize bool) error {
 	base := strings.TrimSuffix(destPath, ".mp3")
-	cmd := exec.CommandContext(ctx, "yt-dlp",
+	args := []string{
 		"--extract-audio",
 		"--audio-format", "mp3",
 		"--audio-quality", fmt.Sprintf("%dk", bitrate),
-		"--output", base+".%(ext)s",
+		"--output", base + ".%(ext)s",
 		"--no-playlist",
 		"--quiet",
 		"--no-warnings",
-		videoURL,
-	)
+	}
+	if normalize {
+		args = append(args, "--postprocessor-args", "ffmpeg:-af loudnorm")
+	}
+	args = append(args, videoURL)
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		msg := strings.TrimSpace(string(out))
 		if len(msg) > 512 {
-			msg = msg[:512] + "…"
+			msg = string([]rune(msg)[:512]) + "…"
 		}
 		return fmt.Errorf("yt-dlp: %w\n%s", err, msg)
 	}

@@ -58,8 +58,9 @@ func (v viewState) String() string {
 // Messages
 
 type downloadedMsg struct {
-	idx int
-	err error
+	idx   int
+	err   error
+	track Track
 }
 
 type discsLoadedMsg []Disc
@@ -485,7 +486,8 @@ func (m model) dlCmd() tea.Cmd {
 		defer cancel()
 		dest := filepath.Join(discPath, filename)
 		err := DownloadAudio(ctx, video.URL, dest, cfg.bitrate, normalize)
-		return downloadedMsg{idx: idx, err: err}
+		t := Track{File: filename, Title: video.Title, VideoID: video.ID, Duration: int(video.Duration.Seconds())}
+		return downloadedMsg{idx: idx, err: err, track: t}
 	}
 }
 
@@ -495,6 +497,9 @@ func (m model) handleDownloaded(msg downloadedMsg) (model, tea.Cmd) {
 		m.dlLog = append(m.dlLog, errStyle.Render("✗ ")+video.Title+": "+msg.err.Error())
 	} else {
 		m.dlLog = append(m.dlLog, okStyle.Render("✓ ")+video.Title)
+		if err := RecordTrack(m.targetDisc, msg.track); err != nil {
+			m.dlLog = append(m.dlLog, errStyle.Render("⚠ metadata: ")+err.Error())
+		}
 	}
 	m.dlPos++
 	if m.dlPos >= len(m.dlIndices) {
@@ -552,9 +557,16 @@ func (m model) updateDiscDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "x":
 		if m.disc != nil && len(m.disc.Songs) > 0 {
-			path := m.disc.Songs[m.songCursor].Path
+			song := m.disc.Songs[m.songCursor]
+			discPath := m.disc.Path
 			return m, func() tea.Msg {
-				return songDiscardedMsg{err: DiscardSong(path)}
+				if err := DiscardSong(song.Path); err != nil {
+					return songDiscardedMsg{err: err}
+				}
+				if err := UnrecordTrack(discPath, song.Name); err != nil {
+					return songDiscardedMsg{err: fmt.Errorf("discarded file but metadata failed: %w", err)}
+				}
+				return songDiscardedMsg{}
 			}
 		}
 	case "u":

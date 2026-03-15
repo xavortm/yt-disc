@@ -71,6 +71,8 @@ type songsProbed struct {
 	songs []Song
 }
 
+type songsTxtWrittenMsg struct{ err error }
+
 type errMsg struct{ err error }
 
 // tickMsg drives the elapsed-time display during loading.
@@ -225,6 +227,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.songCursor >= len(songs) && m.songCursor > 0 {
 				m.songCursor--
 			}
+			name := ReadSongsTxtName(m.disc.Path)
+			if name == "" {
+				name = m.disc.Name
+			}
+			return m, writeSongsTxtCmd(m.disc.Path, name)
+		}
+		return m, nil
+
+	case songsTxtWrittenMsg:
+		if msg.err != nil {
+			m.err = msg.err
 		}
 		return m, nil
 
@@ -498,7 +511,11 @@ func (m model) handleDownloaded(msg downloadedMsg) (model, tea.Cmd) {
 	}
 	m.dlPos++
 	if m.dlPos >= len(m.dlIndices) {
-		return m, nil
+		name := m.playlistName
+		if name == "" {
+			name = filepath.Base(m.targetDisc)
+		}
+		return m, writeSongsTxtCmd(m.targetDisc, name)
 	}
 	return m, m.dlCmd()
 }
@@ -591,6 +608,13 @@ func probeSongsCmd(songs []Song) tea.Cmd {
 			}
 		}
 		return songsProbed{songs: probed}
+	}
+}
+
+// writeSongsTxtCmd writes the songs.txt manifest in the background.
+func writeSongsTxtCmd(discPath, name string) tea.Cmd {
+	return func() tea.Msg {
+		return songsTxtWrittenMsg{err: WriteSongsTxt(discPath, name)}
 	}
 }
 

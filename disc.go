@@ -15,6 +15,7 @@ import (
 const AudioCDCapacity = 80 * time.Minute
 
 // Song represents an audio file on a disc.
+// Duration is zero until explicitly populated via ProbeDuration.
 type Song struct {
 	Path     string
 	Name     string

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -149,6 +150,89 @@ func TestTotalDuration(t *testing.T) {
 	if got != want {
 		t.Errorf("TotalDuration = %v, want %v", got, want)
 	}
+}
+
+func TestSongDisplayName(t *testing.T) {
+	tests := []struct {
+		filename string
+		want     string
+	}{
+		{"01_never_gonna_give_you_up.mp3", "Never Gonna Give You Up"},
+		{"12_another_song.mp3", "Another Song"},
+		{"03_a.mp3", "A"},
+		{"song_without_tracknum.mp3", "Song Without Tracknum"},
+		{"01_untitled.mp3", "Untitled"},
+		{"99_single.mp3", "Single"},
+		{"100_three_digits.mp3", "Three Digits"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			got := SongDisplayName(tt.filename)
+			if got != tt.want {
+				t.Errorf("SongDisplayName(%q) = %q, want %q", tt.filename, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteSongsTxt(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "01_first_song.mp3"), "fake")
+	writeTestFile(t, filepath.Join(dir, "02_second_song.mp3"), "fake")
+
+	songs := []Song{
+		{Name: "01_first_song.mp3", TrackNum: 1, Duration: 3*time.Minute + 30*time.Second},
+		{Name: "02_second_song.mp3", TrackNum: 2, Duration: 4*time.Minute + 15*time.Second},
+	}
+	if err := writeSongsTxt(dir, "My Test Playlist", songs); err != nil {
+		t.Fatalf("writeSongsTxt: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "songs.txt"))
+	if err != nil {
+		t.Fatalf("reading songs.txt: %v", err)
+	}
+	content := string(data)
+
+	// Verify header
+	if !strings.Contains(content, "My Test Playlist") {
+		t.Error("songs.txt missing playlist name")
+	}
+	if !strings.Contains(content, "2 songs") {
+		t.Error("songs.txt missing song count")
+	}
+	if !strings.Contains(content, "7:45") {
+		t.Error("songs.txt missing total duration")
+	}
+	// Verify song lines
+	if !strings.Contains(content, "First Song") {
+		t.Error("songs.txt missing first song display name")
+	}
+	if !strings.Contains(content, "Second Song") {
+		t.Error("songs.txt missing second song display name")
+	}
+	if !strings.Contains(content, "3:30") {
+		t.Error("songs.txt missing first song duration")
+	}
+}
+
+func TestReadSongsTxtName(t *testing.T) {
+	t.Run("existing file", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "songs.txt"), "Best Hits 2024\n5 songs · 20:00\n")
+		got := ReadSongsTxtName(dir)
+		if got != "Best Hits 2024" {
+			t.Errorf("ReadSongsTxtName = %q, want %q", got, "Best Hits 2024")
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		dir := t.TempDir()
+		got := ReadSongsTxtName(dir)
+		if got != "" {
+			t.Errorf("ReadSongsTxtName = %q, want empty", got)
+		}
+	})
 }
 
 func writeTestFile(t *testing.T, path, content string) {

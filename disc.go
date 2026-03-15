@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const AudioCDCapacity = 80 * time.Minute
@@ -138,6 +139,79 @@ func TotalDuration(songs []Song) time.Duration {
 		total += s.Duration
 	}
 	return total
+}
+
+const songsTxtFile = "songs.txt"
+
+// WriteSongsTxt writes a songs.txt manifest into the disc folder.
+// The file contains a header with the disc name, song count, and total
+// duration, followed by one numbered line per song in track order.
+func WriteSongsTxt(discPath, displayName string) error {
+	songs, err := ListSongs(discPath)
+	if err != nil {
+		return fmt.Errorf("listing songs for manifest: %w", err)
+	}
+
+	for i := range songs {
+		if dur, err := ProbeDuration(songs[i].Path); err == nil {
+			songs[i].Duration = dur
+		}
+	}
+
+	return writeSongsTxt(discPath, displayName, songs)
+}
+
+// writeSongsTxt writes songs.txt from pre-populated song data.
+func writeSongsTxt(discPath, displayName string, songs []Song) error {
+	total := TotalDuration(songs)
+
+	var b strings.Builder
+	b.WriteString(displayName + "\n")
+	b.WriteString(fmt.Sprintf("%d songs · %s\n", len(songs), fmtDuration(total)))
+	b.WriteString("────────────────────────────────────────\n")
+
+	for i, s := range songs {
+		name := SongDisplayName(s.Name)
+		dur := fmtDuration(s.Duration)
+		b.WriteString(fmt.Sprintf("%2d. %-40s  %s\n", i+1, name, dur))
+	}
+
+	return os.WriteFile(filepath.Join(discPath, songsTxtFile), []byte(b.String()), 0o644)
+}
+
+// ReadSongsTxtName reads the display name (first line) from an existing
+// songs.txt. Returns an empty string if the file does not exist or is empty.
+func ReadSongsTxtName(discPath string) string {
+	data, err := os.ReadFile(filepath.Join(discPath, songsTxtFile))
+	if err != nil {
+		return ""
+	}
+	line, _, _ := strings.Cut(string(data), "\n")
+	return strings.TrimSpace(line)
+}
+
+// SongDisplayName converts a sanitized track filename back to a readable name.
+// "02_never_gonna_give_you_up.mp3" → "Never Gonna Give You Up"
+func SongDisplayName(filename string) string {
+	name := strings.TrimSuffix(filename, filepath.Ext(filename))
+	// Strip leading track number prefix (e.g., "01_").
+	if idx := strings.Index(name, "_"); idx > 0 && idx <= 3 {
+		if _, err := strconv.Atoi(name[:idx]); err == nil {
+			name = name[idx+1:]
+		}
+	}
+	name = strings.ReplaceAll(name, "_", " ")
+	return titleCase(name)
+}
+
+func titleCase(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		r := []rune(w)
+		r[0] = unicode.ToUpper(r[0])
+		words[i] = string(r)
+	}
+	return strings.Join(words, " ")
 }
 
 func parseTrackNum(name string) int {
